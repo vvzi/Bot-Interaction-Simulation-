@@ -12,6 +12,14 @@ UPDATE_INTERVAL = 0.1  # Delay between updates in seconds
 TELEPORT_COOLDOWN = 2.0  # Cooldown period (in seconds) for teleportation from a corner to a random corner
 MIN_STEPS_DIRECTION = 10  # Minimum number of steps in a direction before changing to a new random direction
 
+# Number of bots
+NUM_SHY_BOTS = 1  # Number of shy bots
+NUM_CHATTY_BOTS = 1  # Number of chatty bots
+
+class Emotion:
+    SHY = 'shy'
+    CHATTY = 'chatty'
+
 class Bot:
     def __init__(self, bot_id, type):
         self.id = bot_id
@@ -97,8 +105,11 @@ class Bot:
         self.velocity = self.get_random_direction()
 
 # Initialize bots
-bot0 = Bot(0, 'shy')
-bot1 = Bot(1, 'chatty')
+bots = []
+for i in range(NUM_SHY_BOTS):
+    bots.append(Bot(i, Emotion.SHY))
+for i in range(NUM_CHATTY_BOTS):
+    bots.append(Bot(NUM_SHY_BOTS + i, Emotion.CHATTY))
 
 # Matplotlib initialization
 fig, ax = plt.subplots()
@@ -108,55 +119,58 @@ ax.set_aspect('equal')
 ax.set_title('Bot Interaction Simulation')
 
 # Scatter plot initialization
-scatter_bot0 = ax.scatter([bot0.position[0]], [bot0.position[1]], c='blue', label='Shy Bot', edgecolor='black', s=100)
-scatter_bot1 = ax.scatter([bot1.position[0]], [bot1.position[1]], c='green', label='Chatty Bot', edgecolor='black', s=100)
+colors = {'shy': 'blue', 'chatty': 'green'}
+scatters = {
+    'shy': ax.scatter([bot.position[0] for bot in bots if bot.type == 'shy'],
+                      [bot.position[1] for bot in bots if bot.type == 'shy'],
+                      c=colors['shy'], label='Shy Bot', edgecolor='black', s=100),
+    'chatty': ax.scatter([bot.position[0] for bot in bots if bot.type == 'chatty'],
+                         [bot.position[1] for bot in bots if bot.type == 'chatty'],
+                         c=colors['chatty'], label='Chatty Bot', edgecolor='black', s=100)
+}
 
 # Distance text initialization
 distance_text = ax.text(0.5, 0.95, '', transform=ax.transAxes, ha='center')
 
 # Function to update the plot
 def update_plot(frame):
-    bot0.move()
-    bot1.move()
+    for bot in bots:
+        bot.move()
 
-    distance = np.linalg.norm(bot0.position - bot1.position)
-
-    if bot0.is_within_interaction_radius(bot1):
-        if bot0.type == 'shy' and bot1.type == 'chatty':
-            # Shy bot runs away
-            bot0.run_away(bot1)
-
-        if bot1.type == 'chatty' and bot0.type == 'shy':
-            # Chatty bot chases shy bot
-            bot1.chase(bot0)
-    else:
-        if bot0.last_interaction_status == 'run_away':
-            print(f"Bot {bot0.id} got away from Bot {bot1.id}")
-            bot0.last_interaction_status = None
-        
-        if bot1.last_interaction_status == 'chase':
-            print(f"Bot {bot1.id} stopped chasing Bot {bot0.id}")
-            bot1.last_interaction_status = None
-
-        if distance >= RUN_AWAY_DISTANCE:
-            if bot0.type == 'shy' and bot1.type == 'chatty' and bot0.last_interaction_status != 'run_away':
-                bot0.resume_random_movement()
-
-            if bot1.type == 'chatty' and bot0.type == 'shy' and bot1.last_interaction_status != 'chase':
-                bot1.resume_random_movement()
-
-    # Update scatter plots
-    scatter_bot0.set_offsets([bot0.position[0], bot0.position[1]])
-    scatter_bot1.set_offsets([bot1.position[0], bot1.position[1]])
+    # Update scatter plot data
+    scatters['shy'].set_offsets([[bot.position[0], bot.position[1]] for bot in bots if bot.type == 'shy'])
+    scatters['chatty'].set_offsets([[bot.position[0], bot.position[1]] for bot in bots if bot.type == 'chatty'])
     
-    # Update distance text
-    distance_text.set_text(f'Distance: {distance:.2f}')
+    # Calculate and update distances and interactions
+    for bot in bots:
+        for other_bot in bots:
+            if bot.id != other_bot.id:
+                distance = np.linalg.norm(bot.position - other_bot.position)
+                if bot.is_within_interaction_radius(other_bot):
+                    if bot.type == Emotion.SHY and other_bot.type == Emotion.CHATTY:
+                        bot.run_away(other_bot)
+                    elif bot.type == Emotion.CHATTY and other_bot.type == Emotion.SHY:
+                        bot.chase(other_bot)
+                else:
+                    if bot.last_interaction_status == 'run_away':
+                        bot.last_interaction_status = None
+                    elif bot.last_interaction_status == 'chase':
+                        bot.last_interaction_status = None
+                    if distance >= RUN_AWAY_DISTANCE:
+                        if bot.type == Emotion.SHY and other_bot.type == Emotion.CHATTY and bot.last_interaction_status != 'run_away':
+                            bot.resume_random_movement()
+                        elif bot.type == Emotion.CHATTY and other_bot.type == Emotion.SHY and bot.last_interaction_status != 'chase':
+                            bot.resume_random_movement()
     
-    # Decrease teleportation cooldown timer
-    bot0.teleport_cooldown_timer = max(bot0.teleport_cooldown_timer - UPDATE_INTERVAL, 0)
-    bot1.teleport_cooldown_timer = max(bot1.teleport_cooldown_timer - UPDATE_INTERVAL, 0)
+    # Update distance text (It was previously used to show distance between two bots.. will still do it if only 2 bots are present, or else just shows avg of theri distance)
+    avg_distance = np.mean([np.linalg.norm(bot.position - other_bot.position) for bot in bots for other_bot in bots if bot.id != other_bot.id])
+    distance_text.set_text(f'Average Distance: {avg_distance:.2f}')
     
-    return scatter_bot0, scatter_bot1, distance_text
+    # Decrease teleportation cooldown timer for all bots (all bots part is intentional, lol)
+    for bot in bots:
+        bot.teleport_cooldown_timer = max(bot.teleport_cooldown_timer - UPDATE_INTERVAL, 0)
+    
+    return list(scatters.values()) + [distance_text]
 
 # Animation
 ani = FuncAnimation(fig, update_plot, frames=None, interval=UPDATE_INTERVAL * 1000, blit=True)
