@@ -11,10 +11,12 @@ BOT_SPEED_FACTOR = 1  # Adjusted speed factor for moderate speed
 UPDATE_INTERVAL = 0.1  # Delay between updates in seconds
 TELEPORT_COOLDOWN = 2.0  # Cooldown period (in seconds) for teleportation from a corner to a random corner
 MIN_STEPS_DIRECTION = 10  # Minimum number of steps in a direction before changing to a new random direction
+CHAT_DURATION = 2.0  # Duration for which chatty bots chat in seconds
+CHAT_COOLDOWN = 10.0  # Cooldown period (in seconds) after chatting
 
 # Number of bots
 NUM_SHY_BOTS = 1  # Number of shy bots
-NUM_CHATTY_BOTS = 1  # Number of chatty bots
+NUM_CHATTY_BOTS = 2  # Number of chatty bots
 
 class Emotion:
     SHY = 'shy'
@@ -29,10 +31,18 @@ class Bot:
         self.interacting_with = None
         self.interaction_timer = 0
         self.teleport_cooldown_timer = 0
+        self.chat_timer = 0  # Timer for chat duration
+        self.chat_cooldown_timer = 0  # Timer for chat cooldown
         self.last_interaction_status = None  # Track last interaction status
         self.steps_in_current_direction = 0  # Track steps taken in current direction
 
     def move(self):
+        if self.chat_timer > 0:
+            self.chat_timer -= UPDATE_INTERVAL
+            return  # If chatting, don't move
+        elif self.chat_cooldown_timer > 0:
+            self.chat_cooldown_timer -= UPDATE_INTERVAL
+        
         # Random movement with bounded conditions
         self.position += self.velocity
         self.position = np.clip(self.position, 0, BOX_SIZE)
@@ -55,9 +65,7 @@ class Bot:
             self.steps_in_current_direction = 0
 
     def teleport_random_corner(self):
-        
-       # Teleport the bot to a different random corner of the simulation box.
-        
+        # Teleport the bot to a different random corner of the simulation box.
         corners = [
             np.array([0, 0], dtype=np.float64),
             np.array([0, BOX_SIZE], dtype=np.float64),
@@ -72,13 +80,10 @@ class Bot:
 
         # Reset velocity to a random direction
         self.velocity = self.get_random_direction()
-
         self.resume_random_movement()  # Resume random movement after teleportation
 
     def get_random_direction(self):
-        
-       # Get a random direction vector.
-        
+        # Get a random direction vector.
         return np.array([random.uniform(-1, 1), random.uniform(-1, 1)], dtype=np.float64) * BOT_SPEED_FACTOR
 
     def is_within_interaction_radius(self, other):
@@ -100,6 +105,15 @@ class Bot:
             if self.last_interaction_status != 'chase':
                 print(f"Bot {self.id} starts chasing Bot {other.id}")
                 self.last_interaction_status = 'chase'
+
+    def chat(self, other):
+        self.velocity = np.array([0, 0], dtype=np.float64)  # Stop moving
+        other.velocity = np.array([0, 0], dtype=np.float64)  # Other bot stops moving too
+        self.chat_timer = CHAT_DURATION  # Start chat timer
+        self.chat_cooldown_timer = CHAT_COOLDOWN  # Start cooldown timer
+        other.chat_timer = CHAT_DURATION  # Start chat timer for other bot
+        other.chat_cooldown_timer = CHAT_COOLDOWN  # Start cooldown timer for other bot
+        print(f"Bot {self.id} is chatting with Bot {other.id}")
 
     def resume_random_movement(self):
         self.velocity = self.get_random_direction()
@@ -129,6 +143,9 @@ scatters = {
                          c=colors['chatty'], label='Chatty Bot', edgecolor='black', s=100)
 }
 
+# Initialize text annotations for bot IDs
+bot_texts = [ax.text(bot.position[0], bot.position[1], str(bot.id), ha='center', va='bottom') for bot in bots]
+
 # Distance text initialization
 distance_text = ax.text(0.5, 0.95, '', transform=ax.transAxes, ha='center')
 
@@ -141,6 +158,11 @@ def update_plot(frame):
     scatters['shy'].set_offsets([[bot.position[0], bot.position[1]] for bot in bots if bot.type == 'shy'])
     scatters['chatty'].set_offsets([[bot.position[0], bot.position[1]] for bot in bots if bot.type == 'chatty'])
     
+    # Update text annotations for bot IDs
+    for bot, text in zip(bots, bot_texts):
+        text.set_position((bot.position[0], bot.position[1] + 1))  # Position text slightly above the bot
+        text.set_text(str(bot.id))
+
     # Calculate and update distances and interactions
     for bot in bots:
         for other_bot in bots:
@@ -151,26 +173,35 @@ def update_plot(frame):
                         bot.run_away(other_bot)
                     elif bot.type == Emotion.CHATTY and other_bot.type == Emotion.SHY:
                         bot.chase(other_bot)
+                    elif bot.type == Emotion.CHATTY and other_bot.type == Emotion.CHATTY:
+                        if bot.chat_timer <= 0 and other_bot.chat_timer <= 0 and bot.chat_cooldown_timer <= 0 and other_bot.chat_cooldown_timer <= 0:
+                            bot.chat(other_bot)
                 else:
                     if bot.last_interaction_status == 'run_away':
+                        print(f"Bot {bot.id} got away from Bot {other_bot.id}")
                         bot.last_interaction_status = None
-                    elif bot.last_interaction_status == 'chase':
+                    if bot.last_interaction_status == 'chase':
+                        print(f"Bot {bot.id} stopped chasing Bot {other_bot.id}")
                         bot.last_interaction_status = None
                     if distance >= RUN_AWAY_DISTANCE:
                         if bot.type == Emotion.SHY and other_bot.type == Emotion.CHATTY and bot.last_interaction_status != 'run_away':
                             bot.resume_random_movement()
-                        elif bot.type == Emotion.CHATTY and other_bot.type == Emotion.SHY and bot.last_interaction_status != 'chase':
+                        if bot.type == Emotion.CHATTY and other_bot.type == Emotion.SHY and bot.last_interaction_status != 'chase':
                             bot.resume_random_movement()
-    
+                        if bot.type == Emotion.CHATTY and other_bot.type == Emotion.CHATTY:
+                            bot.resume_random_movement()
+
     # Update distance text (It was previously used to show distance between two bots.. will still do it if only 2 bots are present, or else just shows avg of theri distance)
-    avg_distance = np.mean([np.linalg.norm(bot.position - other_bot.position) for bot in bots for other_bot in bots if bot.id != other_bot.id])
-    distance_text.set_text(f'Average Distance: {avg_distance:.2f}')
-    
-    # Decrease teleportation cooldown timer for all bots (all bots part is intentional, lol)
+    if bots:
+        avg_distance = np.mean([np.linalg.norm(bot.position - other_bot.position) for bot in bots for other_bot in bots if bot.id != other_bot.id])
+        distance_text.set_text(f'Average Distance: {avg_distance:.2f}')
+
+    # Decrease teleportation cooldown timer for all bots
     for bot in bots:
         bot.teleport_cooldown_timer = max(bot.teleport_cooldown_timer - UPDATE_INTERVAL, 0)
     
-    return list(scatters.values()) + [distance_text]
+    # Return updated plot elements
+    return scatters['shy'], scatters['chatty'], distance_text, *bot_texts
 
 # Animation
 ani = FuncAnimation(fig, update_plot, frames=None, interval=UPDATE_INTERVAL * 1000, blit=True)
